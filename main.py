@@ -1,13 +1,13 @@
 import csv
+import time
+import re
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import re
 from bs4 import BeautifulSoup
-import time
 
 # Step 1: Selenium을 사용하여 웹 페이지 로드
 options = webdriver.ChromeOptions()
@@ -19,7 +19,7 @@ driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), opti
 url = "https://www.kbchachacha.com/public/search/main.kbc"
 driver.get(url)
 
-wait = WebDriverWait(driver, 10)
+wait = WebDriverWait(driver, 30)
 container = wait.until(EC.presence_of_element_located((By.ID, 'mCSB_1_container')))
 
 soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -40,8 +40,7 @@ print("Manufacturers and Codes:", manufacturers)
 
 for manufacturer, maker_code in manufacturers:
     driver.get(f"https://www.kbchachacha.com/public/search/main.kbc#!?page=1&sort=-orderDate&makerCode={maker_code}")
-    #오버로드 방지
-    time.sleep(2)  
+    time.sleep(2)
     
     wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'checkList__model__title')))
     
@@ -73,28 +72,49 @@ for manufacturer, maker_code in manufacturers:
             sub_soup = BeautifulSoup(driver.page_source, 'html.parser')
             
             sub_models = []
-            sub_model_section = sub_soup.find('div', class_='checkList__year')
-            if sub_model_section:
-                for sub_model_item in sub_model_section.find_all('div', class_='listItem'):
-                    sub_model_name = sub_model_item.find('label').find('span').text.strip()
-                    sub_model_number = sub_model_item.find('span', class_='number').text.strip()
-                    sub_models.append((sub_model_name, sub_model_number))
+            car_codes = sub_soup.find_all('label', attrs={"for": re.compile('carCode-\d+')})
+            for car_code_label in car_codes:
+                car_code = car_code_label['for'].split('-')[1]
+                sub_model_name = car_code_label.find('span').text.strip()
+                sub_model_number = car_code_label.find_next('span', class_='number').text.strip()
 
+                sub_models.append((sub_model_name, car_code, sub_model_number))
+                
+                driver.get(f"https://www.kbchachacha.com/public/search/main.kbc#!?page=1&sort=-orderDate&makerCode={maker_code}&classCode={model_code}&carCode={car_code}")
+                time.sleep(2)
+                
+                grade_soup = BeautifulSoup(driver.page_source, 'html.parser')
+                
+                grades = []
+                grade_section = grade_soup.find('div', class_='checkList__year')
+                if grade_section:
+                    for grade_item in grade_section.find_all('div', class_='listItem'):
+                        grade_name = grade_item.find('label').find('span').text.strip()
+                        grade_number = grade_item.find('span', class_='number').text.strip()
+                        grades.append((grade_name, grade_number))
+
+                sub_models[-1] += (grades,)
+    
             models[-1] += (sub_models,)
     
     manufacturer_data[manufacturer] = models
 
 with open('manufacturers_models.csv', 'w', encoding='utf-8', newline='') as file:
     writer = csv.writer(file)
-    writer.writerow(['Manufacturer', 'Model Name', 'Model Code', 'Model Number', 'Sub-model Name', 'Sub-model Number'])
+    writer.writerow(['Manufacturer', 'Model Name', 'Model Code', 'Model Number', 'Sub-model Name', 'Sub-model Code', 'Sub-model Number', 'Grade Name', 'Grade Number'])
     
     for manufacturer, models in manufacturer_data.items():
         for model_data in models:
             model_name, model_code, model_number, sub_models = model_data
             if sub_models:
-                for sub_model_name, sub_model_number in sub_models:
-                    writer.writerow([manufacturer, model_name, model_code, model_number, sub_model_name, sub_model_number])
+                for sub_model_data in sub_models:
+                    sub_model_name, sub_model_code, sub_model_number, grades = sub_model_data
+                    if grades:
+                        for grade_name, grade_number in grades:
+                            writer.writerow([manufacturer, model_name, model_code, model_number, sub_model_name, sub_model_code, sub_model_number, grade_name, grade_number])
+                    else:
+                        writer.writerow([manufacturer, model_name, model_code, model_number, sub_model_name, sub_model_code, sub_model_number, '', ''])
             else:
-                writer.writerow([manufacturer, model_name, model_code, model_number, '', ''])
+                writer.writerow([manufacturer, model_name, model_code, model_number, '', '', '', ''])
 
 driver.quit()
